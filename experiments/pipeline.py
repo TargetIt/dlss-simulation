@@ -114,14 +114,18 @@ def run_pipeline(image_path, output_dir="assets/pipeline", num_frames=30, lr_siz
     print("\n[2/4] Super Resolution (WarpFuseTSR)...")
     sr_model = WarpFuseTSR(hidden_channels=64).to(dev).eval()
 
-    # Try loading trained checkpoint
+    # Try loading trained checkpoint (auto-download from GitHub Release)
     checkpoint_path = "references/Super-Resolution/checkpoints/p2_best.pth"
-    if os.path.exists(checkpoint_path):
-        state = torch.load(checkpoint_path, map_location=dev, weights_only=True)
-        sr_model.load_state_dict(state)
-        print(f"  Loaded checkpoint: {checkpoint_path}")
-    else:
-        print("  ⚠️  No checkpoint found, using random weights")
+    if not os.path.exists(checkpoint_path):
+        url = "https://github.com/TargetIt/dlss-simulation/releases/download/v1.0/p2_best.pth"
+        print(f"  Downloading checkpoint from {url} ...")
+        os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+        import urllib.request
+        urllib.request.urlretrieve(url, checkpoint_path)
+        print(f"  Saved to {checkpoint_path}")
+    state = torch.load(checkpoint_path, map_location=dev, weights_only=True)
+    sr_model.load_state_dict(state)
+    print(f"  Loaded checkpoint: {checkpoint_path}")
     sr_frames = []
     sr_times = []
 
