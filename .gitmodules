@@ -1,0 +1,6 @@
+[submodule "references/Practical-RIFE"]
+	path = references/Practical-RIFE
+	url = https://github.com/hzwer/Practical-RIFE.git
+[submodule "references/Super-Resolution"]
+	path = references/Super-Resolution
+	url = https://github.com/egan-wu/Super-Resolution.git

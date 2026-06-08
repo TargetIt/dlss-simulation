@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+
+# Models & data (too large)
+*.pth
+*.pkl
+*.tar
+data/div2k/
+data/flickr2k/
+data/samples/
+
+# Assets (generated)
+assets/pipeline/*.png
+assets/pipeline/*.mp4
+assets/*.png
+assets/*.mp4
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
