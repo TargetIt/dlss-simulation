@@ -72,9 +72,14 @@ def to_torch(img, device="cpu"):
     return t.to(device)
 
 
-def to_numpy(t):
+def to_numpy(t, normalize=False):
     """torch B×C×H×W [0,1] → numpy H×W×C [0,255]"""
-    return (t[0].permute(1, 2, 0).detach().cpu().numpy().clip(0, 1) * 255).astype(np.uint8)
+    x = t[0].permute(1, 2, 0).detach().cpu()
+    if normalize:
+        x_min, x_max = x.min(), x.max()
+        if x_max - x_min > 1e-8:
+            x = (x - x_min) / (x_max - x_min)
+    return (x.clip(0, 1) * 255).to(torch.uint8).numpy()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -108,6 +113,15 @@ def run_pipeline(image_path, output_dir="assets/pipeline", num_frames=30, lr_siz
     # ── Stage 1: Super Resolution ──
     print("\n[2/4] Super Resolution (WarpFuseTSR)...")
     sr_model = WarpFuseTSR(hidden_channels=64).to(dev).eval()
+
+    # Try loading trained checkpoint
+    checkpoint_path = "references/Super-Resolution/checkpoints/p2_best.pth"
+    if os.path.exists(checkpoint_path):
+        state = torch.load(checkpoint_path, map_location=dev, weights_only=True)
+        sr_model.load_state_dict(state)
+        print(f"  Loaded checkpoint: {checkpoint_path}")
+    else:
+        print("  ⚠️  No checkpoint found, using random weights")
     sr_frames = []
     sr_times = []
 
@@ -131,7 +145,7 @@ def run_pipeline(image_path, output_dir="assets/pipeline", num_frames=30, lr_siz
         prev_frame = lr_np
         prev_t = lr_t
 
-    sr_np = [to_numpy(f) for f in sr_frames]
+    sr_np = [to_numpy(f) for f in sr_frames]  # trained model, no normalize needed
     avg_sr_time = np.mean(sr_times) * 1000 if sr_times else 0
     print(f"  {len(sr_frames)} frames upscaled | avg {avg_sr_time:.1f} ms/frame")
 
