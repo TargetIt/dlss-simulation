@@ -3,7 +3,7 @@ DLSS 4.5 Simulation — End-to-End Integration Pipeline
 
 Pipeline:
   1. Load HR source image → generate synthetic LR video (pan + jitter)
-  2. Super Resolution: LR → HR (WarpFuseTSR with Farneback flow)
+  2. Super Resolution: LR → HR (RecurrentTSR — Phase 3 recurrent feedback)
   3. Frame Generation: interpolate between SR frames (FlowNetLite)
   4. Denoising: clean up artifacts (UNetDenoiser)
   5. Metrics: PSNR, SSIM, latency per stage
@@ -23,7 +23,7 @@ from skimage.metrics import structural_similarity as ssim_skimage
 # Add project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.super_resolution import WarpFuseTSR, backward_warp, get_device, compute_psnr, compute_ssim
+from src.super_resolution import WarpFuseTSR, RecurrentTSR, backward_warp, get_device, compute_psnr, compute_ssim
 from src.frame_generation import FrameGenerator, interpolate_frame_farneback
 from src.denoising import UNetDenoiser
 
@@ -111,13 +111,13 @@ def run_pipeline(image_path, output_dir="assets/pipeline", num_frames=30, lr_siz
     print(f"  Generated {len(lr_frames)} frames in {dt_gen:.2f}s")
 
     # ── Stage 1: Super Resolution ──
-    print("\n[2/4] Super Resolution (WarpFuseTSR)...")
-    sr_model = WarpFuseTSR(hidden_channels=64).to(dev).eval()
+    print("\n[2/4] Super Resolution (RecurrentTSR)...")
+    sr_model = RecurrentTSR(hidden_channels=64).to(dev).eval()
 
     # Try loading trained checkpoint (auto-download from GitHub Release)
-    checkpoint_path = "references/Super-Resolution/checkpoints/p2_best.pth"
+    checkpoint_path = "references/Super-Resolution/checkpoints/p3_best.pth"
     if not os.path.exists(checkpoint_path):
-        url = "https://github.com/TargetIt/dlss-simulation/releases/download/v1.0/p2_best.pth"
+        url = "https://github.com/TargetIt/dlss-simulation/releases/download/v1.1/p3_best.pth"
         print(f"  Downloading checkpoint from {url} ...")
         os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
         import urllib.request
@@ -129,25 +129,27 @@ def run_pipeline(image_path, output_dir="assets/pipeline", num_frames=30, lr_siz
     sr_frames = []
     sr_times = []
 
-    prev_frame = None
+    hr_prev = None  # recurrent state: previous HR prediction
+    prev_lr_np = None  # for flow estimation
     for i, lr_np in enumerate(lr_frames):
         lr_t = to_torch(lr_np, dev)
 
-        if prev_frame is None:
-            # First frame: no history, use self as prev (no warp benefit)
-            sr_t = sr_model(lr_t, lr_t, torch.tensor([[0., 0.]], device=dev), backward_warp)
+        if hr_prev is None:
+            # First frame: use bicubic upsample as initial HR(t-1), zero flow
+            hr_prev = F.interpolate(lr_t, scale_factor=4, mode='bicubic', align_corners=False)
+            flow_t = torch.zeros(1, 2, device=dev)
         else:
-            # Estimate flow using Farneback (returns H×W×2 numpy)
-            flow_np, _ = estimate_flow_farneback_cv(prev_frame, lr_np)
-            # Convert: H×W×2 → 2×H×W → 1×2×H×W
+            # Estimate backward flow between consecutive LR frames
+            flow_np, _ = estimate_flow_farneback_cv(prev_lr_np, lr_np)
             flow_t = torch.from_numpy(flow_np).float().permute(2, 0, 1).unsqueeze(0).to(dev)
-            t_start = time.perf_counter()
-            sr_t = sr_model(prev_t, lr_t, flow_t, backward_warp)
-            sr_times.append(time.perf_counter() - t_start)
+
+        t_start = time.perf_counter()
+        sr_t = sr_model(lr_t, hr_prev, flow_t, backward_warp)
+        sr_times.append(time.perf_counter() - t_start)
 
         sr_frames.append(sr_t)
-        prev_frame = lr_np
-        prev_t = lr_t
+        hr_prev = sr_t.clamp(0, 1)  # feed back as next frame's HR(t-1)
+        prev_lr_np = lr_np
 
     sr_np = [to_numpy(f) for f in sr_frames]  # trained model, no normalize needed
     avg_sr_time = np.mean(sr_times) * 1000 if sr_times else 0
